@@ -62,7 +62,7 @@ async function returnTags(
     throw new Error("Invalid API key format.");
   }
 
-  while (isMore && allTags.length < 1000000) {
+  while (isMore && allTags.length < 5000) {
     const response = await fetch(subgraphUrl, {
       method: "POST",
       headers: {
@@ -90,6 +90,7 @@ async function returnTags(
       last_id = nfts[nfts.length - 1].id;
     }
   }
+  console.log("There are >200k tags but stopping after 5k for this test");
   return allTags;
 }
 
