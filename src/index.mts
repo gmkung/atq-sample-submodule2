@@ -1,63 +1,45 @@
-// Use dynamic import for node-fetch
 import fetch from "node-fetch";
 import { Tag } from "atq-types";
 
-const SUBGRAPH_URLS: Record<string, string> = {
-  // Ethereum Mainnet
-  "1": "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-v2",
-  // Polygon (MATIC)
-  "137":
-    "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-polygon-v2",
-  // Arbitrum
-  "42161":
-    "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-arbitrum-v2",
-  // Optimism
-  "10": "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-optimism-v2",
-  // Gnosis Chain (formerly xDai)
-  "100":
-    "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-gnosis-chain-v2",
-  // Avalanche
-  "43114":
-    "https://api.thegraph.com/subgraphs/name/balancer-labs/balancer-avalanche-v2",
-  // Polygon zkEVM
-  "1101":
-    "https://api.studio.thegraph.com/query/24660/balancer-polygon-zk-v2/version/latest",
-  // Base
-  "84532":
-    "https://api.studio.thegraph.com/query/24660/balancer-base-v2/version/latest",
-};
-
-// Updated Pool interface to match the new query structure
-interface Pool {
-  address: string; // Changed from 'id' to 'address'
-  createTime: number;
-  tokens: {
-    symbol: string;
-    name: string;
-  }[];
+// Updated NFT interface to match query result structure
+interface NFT {
+  id: string;
+  symbol: string;
+  asAccount: {
+    id: string;
+  };
+  supportsMetadata: boolean;
+  name: string;
 }
-
-// Updated to reflect the correct response structure based on the query
 interface GraphQLResponse {
   data: {
-    pools: Pool[];
+    erc721Contracts: NFT[];
   };
 }
 
+const SUBGRAPH_URLS: Record<string, string> = {
+  "1": "https://api.thegraph.com/subgraphs/name/amxx/nft-mainnet", // Ethereum Mainnet
+  //"56": "https://api.thegraph.com/subgraphs/name/amxx/nft-bsc", // Binance Smart Chain (BSC)
+  //"137": "https://api.thegraph.com/subgraphs/name/amxx/nft-matic", // Polygon (Matic)
+  //"100": "https://api.thegraph.com/subgraphs/name/amxx/nft-xdai", // Gnosis Chain (xDai)
+  // Add more mappings as needed based on your requirements
+};
+
 const GET_POOLS_QUERY = `
-  query GetPools($lastTimestamp: Int) {
-    pools(
+  query GetPools($last_id: String!) {
+    erc721Contracts(
       first: 1000,
-      orderBy: createTime,
+      orderBy: id,
       orderDirection: asc,
-      where: { createTime_gt: $lastTimestamp }
+      where: { id_gt: $last_id }
     ) {
-      address
-      createTime
-      tokens {
-        symbol
-        name  
+      id
+      symbol
+      asAccount {
+        id
       }
+      supportsMetadata
+      name
     }
   }
 `;
@@ -66,28 +48,31 @@ async function returnTags(
   chainId: string,
   apiKey: string
 ): Promise<Tag[] | Error> {
-  let lastTimestamp: number = 0;
+  let last_id: string = "0";
   let allTags: Tag[] = [];
   let isMore = true;
 
-  // Use the chainId to get the correct Subgraph URL from the mapping
+  // Use chainId to determine the correct subgraph URL
   const subgraphUrl = SUBGRAPH_URLS[chainId];
   if (!subgraphUrl) {
     throw new Error(`Unsupported Chain ID: ${chainId}.`);
   }
 
-  // Then, use `subgraphUrl` in your fetch call
-  while (isMore) {
+  if (!apiKey || apiKey.length < 20) {
+    throw new Error("Invalid API key format.");
+  }
+
+  while (isMore && allTags.length < 1000000) {
     const response = await fetch(subgraphUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`, // Assuming the API key is needed for all requests
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         query: GET_POOLS_QUERY,
-        variables: { lastTimestamp: lastTimestamp },
+        variables: { last_id: last_id },
       }),
     });
 
@@ -95,31 +80,28 @@ async function returnTags(
       throw new Error(`Network response was not ok: ${response.statusText}`);
     }
     const result = (await response.json()) as GraphQLResponse;
-    const pools: Pool[] = result.data.pools;
+    const nfts: NFT[] = result.data.erc721Contracts;
 
-    allTags.push(...transformPoolsToTags(chainId, pools));
-
-    if (pools.length < 1000) {
+    allTags.push(...transformPoolsToTags(chainId, nfts));
+    console.log("Currently at: ", allTags.length);
+    if (nfts.length < 1000) {
       isMore = false;
     } else {
-      // Assuming 'createTime' is now a property on the returned pools, which needs verification
-      lastTimestamp = parseInt(pools[pools.length - 1].createTime.toString());
+      last_id = nfts[nfts.length - 1].id;
     }
   }
-
   return allTags;
 }
 
-// Adjusted transformation function to match the updated Pool interface
-function transformPoolsToTags(chainId: string, pools: Pool[]): Tag[] {
-  return pools.map((pool) => ({
-    "Contract Address": `eip155:${chainId}:${pool.address}`,
-    "Public Name Tag": `${pool.tokens.map((t) => t.symbol).join("/")} Pool`,
-    "Project Name": "Balancer v2",
-    "UI/Website Link": "https://balancer.fi/",
-    "Public Note": `A Balancer v2 pool with tokens ${pool.tokens
-      .map((t) => t.name)
-      .join(", ")}.`,
+function transformPoolsToTags(chainId: string, nfts: NFT[]): Tag[] {
+  return nfts.map((nft) => ({
+    "Contract Address": `eip155:${chainId}:${nft.id}`,
+    "Public Name Tag": `${nft.symbol} token`,
+    "Project Name": nft.name,
+    "UI/Website Link": `https://etherscan.io/address/${nft.asAccount.id}`, // Assuming the asAccount.id is the contract address
+    "Public Note": `The contract for the ${nft.symbol} token of nft.name. ${
+      nft.supportsMetadata ? "Supports metadata" : "Does not support metadata"
+    }.`,
   }));
 }
 

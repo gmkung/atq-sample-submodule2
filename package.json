@@ -1,6 +1,6 @@
 {
-  "name": "atq-sample-submodule",
-  "version": "1.0.0",
+  "name": "atq-sample-submodule2",
+  "version": "1.0.1",
   "main": "index.js",
   "type": "module",
   "author": "gmkung <guangmian@gmail.com>",
