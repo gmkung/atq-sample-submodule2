@@ -1,5 +1,5 @@
 import fetch from "node-fetch";
-import { Tag } from "atq-types";
+import { ContractTag, ITagService } from "atq-types";
 
 // Updated NFT interface to match query result structure
 interface NFT {
@@ -17,7 +17,7 @@ interface GraphQLResponse {
   };
 }
 
-const SUBGRAPH_URLS: Record<string, string> = {
+const SUBGRAPH_URLS_HOSTED: Record<string, string> = {
   "1": "https://api.thegraph.com/subgraphs/name/amxx/nft-mainnet", // Ethereum Mainnet
   //"56": "https://api.thegraph.com/subgraphs/name/amxx/nft-bsc", // Binance Smart Chain (BSC)
   //"137": "https://api.thegraph.com/subgraphs/name/amxx/nft-matic", // Polygon (Matic)
@@ -44,66 +44,72 @@ const GET_POOLS_QUERY = `
   }
 `;
 
-async function returnTags(
-  chainId: string,
-  apiKey: string
-): Promise<Tag[] | Error> {
-  let last_id: string = "0";
-  let allTags: Tag[] = [];
-  let isMore = true;
+class TagService implements ITagService {
+  returnTags = async (
+    chainId: string,
+    apiKey: string | null
+  ): Promise<ContractTag[]> => {
+    let last_id: string = "0";
+    let allTags: ContractTag[] = [];
+    let isMore = true;
 
-  // Use chainId to determine the correct subgraph URL
-  const subgraphUrl = SUBGRAPH_URLS[chainId];
-  if (!subgraphUrl) {
-    throw new Error(`Unsupported Chain ID: ${chainId}.`);
-  }
+    if (apiKey === null) {
+      const subgraphUrl = SUBGRAPH_URLS_HOSTED[chainId];
+      if (!subgraphUrl) {
+        throw new Error(`Unsupported Chain ID for uan: ${chainId}.`);
+      }
+      while (isMore && allTags.length < 5000) {
+        const response = await fetch(subgraphUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            query: GET_POOLS_QUERY,
+            variables: { last_id: last_id },
+          }),
+        });
 
-  if (!apiKey || apiKey.length < 20) {
-    throw new Error("Invalid API key format.");
-  }
+        if (!response.ok) {
+          throw new Error(
+            `Network response was not ok: ${response.statusText}`
+          );
+        }
+        const result = (await response.json()) as GraphQLResponse;
+        const nfts: NFT[] = result.data.erc721Contracts;
 
-  while (isMore && allTags.length < 5000) {
-    const response = await fetch(subgraphUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        query: GET_POOLS_QUERY,
-        variables: { last_id: last_id },
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Network response was not ok: ${response.statusText}`);
-    }
-    const result = (await response.json()) as GraphQLResponse;
-    const nfts: NFT[] = result.data.erc721Contracts;
-
-    allTags.push(...transformPoolsToTags(chainId, nfts));
-    console.log("Currently at: ", allTags.length);
-    if (nfts.length < 1000) {
-      isMore = false;
+        allTags.push(...transformPoolsToTags(chainId, nfts));
+        if (nfts.length < 1000) {
+          isMore = false;
+        } else {
+          last_id = nfts[nfts.length - 1].id;
+        }
+      }
+      console.log("There are >200k tags but stopping after 5k for this test");
     } else {
-      last_id = nfts[nfts.length - 1].id;
+      throw new Error(
+        "Queries to the decentralized Graph Network are not supported."
+      );
     }
-  }
-  console.log("There are >200k tags but stopping after 5k for this test");
-  return allTags;
+    return allTags;
+  };
 }
 
-function transformPoolsToTags(chainId: string, nfts: NFT[]): Tag[] {
+// Utility function remains outside the class
+function transformPoolsToTags(chainId: string, nfts: NFT[]): ContractTag[] {
   return nfts.map((nft) => ({
     "Contract Address": `eip155:${chainId}:${nft.id}`,
     "Public Name Tag": `${nft.symbol} token`,
     "Project Name": nft.name,
-    "UI/Website Link": `https://etherscan.io/address/${nft.asAccount.id}`, // Assuming the asAccount.id is the contract address
+    "UI/Website Link": `https://etherscan.io/address/${nft.asAccount.id}`,
     "Public Note": `The contract for the ${nft.symbol} token of nft.name. ${
       nft.supportsMetadata ? "Supports metadata" : "Does not support metadata"
     }.`,
   }));
 }
 
-export { returnTags };
+// Creating an instance of TagService and exporting the returnTags function
+const tagService = new TagService();
+export const returnTags = tagService.returnTags;
